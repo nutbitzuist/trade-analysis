@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: trade-analysis
+    env: node
+    buildCommand: npm run build:all
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1

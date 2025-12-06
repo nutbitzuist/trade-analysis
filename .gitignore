@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+client/node_modules/
+
+# Database
+data/*.db
+
+# Build output
+client/dist/
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Bridge (not needed for production)
+bridge/__pycache__/
