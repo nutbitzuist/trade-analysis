@@ -9,7 +9,7 @@
 #property strict
 
 //--- Input parameters
-input string   ServerURL = "http://localhost:3001/api/sync";  // Server URL
+input string   ServerURL = "https://web-production-017ac.up.railway.app/api/sync";  // Server URL
 input string   ApiKey = "";                                    // API Key from Web App
 input int      SyncIntervalSeconds = 30;                       // Sync interval in seconds
 input bool     SyncOpenTrades = true;                          // Sync open trades

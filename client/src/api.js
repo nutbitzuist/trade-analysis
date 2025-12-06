@@ -56,3 +56,14 @@ export const getDailyStats = (params = {}) => {
   return request(`/analytics/daily${query ? `?${query}` : ''}`);
 };
 export const getSymbols = () => request('/symbols');
+
+// Advanced Analytics
+export const getAdvancedAnalytics = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return request(`/analytics/advanced${query ? `?${query}` : ''}`);
+};
+export const getMonthlyStats = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return request(`/analytics/monthly${query ? `?${query}` : ''}`);
+};
+export const getTradeAnalysis = (id) => request(`/analytics/trade/${id}`);

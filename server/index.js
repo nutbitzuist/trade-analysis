@@ -597,6 +597,337 @@ app.get('/api/symbols', (req, res) => {
   }
 });
 
+// ============ ADVANCED ANALYTICS ENDPOINTS ============
+
+// Get detailed trade analysis
+app.get('/api/analytics/advanced', (req, res) => {
+  try {
+    const { account_id } = req.query;
+    
+    let whereClause = 'WHERE status = ?';
+    const params = ['closed'];
+    
+    if (account_id) {
+      whereClause += ' AND account_id = ?';
+      params.push(account_id);
+    }
+    
+    // Get all closed trades for analysis
+    const trades = dbAll(`
+      SELECT * FROM trades ${whereClause} ORDER BY close_time ASC
+    `, params);
+    
+    if (trades.length === 0) {
+      return res.json({
+        total_trades: 0,
+        message: 'No closed trades to analyze'
+      });
+    }
+    
+    // Calculate advanced metrics
+    const profits = trades.map(t => t.profit);
+    const wins = trades.filter(t => t.profit > 0);
+    const losses = trades.filter(t => t.profit < 0);
+    
+    // Consecutive wins/losses
+    let maxConsecWins = 0, maxConsecLosses = 0;
+    let currentConsecWins = 0, currentConsecLosses = 0;
+    
+    trades.forEach(t => {
+      if (t.profit > 0) {
+        currentConsecWins++;
+        currentConsecLosses = 0;
+        maxConsecWins = Math.max(maxConsecWins, currentConsecWins);
+      } else if (t.profit < 0) {
+        currentConsecLosses++;
+        currentConsecWins = 0;
+        maxConsecLosses = Math.max(maxConsecLosses, currentConsecLosses);
+      }
+    });
+    
+    // Drawdown calculation
+    let peak = 0, maxDrawdown = 0, cumulative = 0;
+    const drawdownData = [];
+    
+    trades.forEach(t => {
+      cumulative += t.profit;
+      if (cumulative > peak) peak = cumulative;
+      const drawdown = peak - cumulative;
+      if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+      drawdownData.push({
+        date: t.close_time,
+        cumulative,
+        drawdown: peak > 0 ? (drawdown / peak * 100) : 0
+      });
+    });
+    
+    // Trading by hour analysis
+    const hourlyStats = {};
+    trades.forEach(t => {
+      if (t.open_time) {
+        const hour = new Date(t.open_time).getHours();
+        if (!hourlyStats[hour]) {
+          hourlyStats[hour] = { trades: 0, profit: 0, wins: 0 };
+        }
+        hourlyStats[hour].trades++;
+        hourlyStats[hour].profit += t.profit;
+        if (t.profit > 0) hourlyStats[hour].wins++;
+      }
+    });
+    
+    // Trading by day of week
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dailyStats = {};
+    dayNames.forEach(d => dailyStats[d] = { trades: 0, profit: 0, wins: 0 });
+    
+    trades.forEach(t => {
+      if (t.open_time) {
+        const day = dayNames[new Date(t.open_time).getDay()];
+        dailyStats[day].trades++;
+        dailyStats[day].profit += t.profit;
+        if (t.profit > 0) dailyStats[day].wins++;
+      }
+    });
+    
+    // Holding time analysis
+    const holdingTimes = trades.map(t => {
+      if (t.open_time && t.close_time) {
+        return (new Date(t.close_time) - new Date(t.open_time)) / (1000 * 60); // minutes
+      }
+      return 0;
+    }).filter(t => t > 0);
+    
+    const avgHoldingTime = holdingTimes.length > 0 
+      ? holdingTimes.reduce((a, b) => a + b, 0) / holdingTimes.length 
+      : 0;
+    
+    // Win/Loss by holding time
+    const shortTrades = trades.filter(t => {
+      if (t.open_time && t.close_time) {
+        const mins = (new Date(t.close_time) - new Date(t.open_time)) / (1000 * 60);
+        return mins < 60; // Less than 1 hour
+      }
+      return false;
+    });
+    
+    const longTrades = trades.filter(t => {
+      if (t.open_time && t.close_time) {
+        const mins = (new Date(t.close_time) - new Date(t.open_time)) / (1000 * 60);
+        return mins >= 60;
+      }
+      return false;
+    });
+    
+    // Risk metrics
+    const returns = [];
+    for (let i = 1; i < trades.length; i++) {
+      returns.push(trades[i].profit);
+    }
+    
+    const avgReturn = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
+    const stdDev = returns.length > 0 
+      ? Math.sqrt(returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / returns.length)
+      : 0;
+    
+    // Sharpe-like ratio (simplified)
+    const sharpeRatio = stdDev !== 0 ? (avgReturn / stdDev) : 0;
+    
+    // Lot size analysis
+    const lotSizes = trades.map(t => t.lots);
+    const avgLotSize = lotSizes.reduce((a, b) => a + b, 0) / lotSizes.length;
+    
+    // Buy vs Sell analysis
+    const buyTrades = trades.filter(t => t.type === 'BUY');
+    const sellTrades = trades.filter(t => t.type === 'SELL');
+    
+    const response = {
+      // Basic stats
+      total_trades: trades.length,
+      winning_trades: wins.length,
+      losing_trades: losses.length,
+      win_rate: ((wins.length / trades.length) * 100).toFixed(2),
+      
+      // Profit metrics
+      total_profit: profits.reduce((a, b) => a + b, 0),
+      gross_profit: wins.reduce((sum, t) => sum + t.profit, 0),
+      gross_loss: losses.reduce((sum, t) => sum + t.profit, 0),
+      avg_win: wins.length > 0 ? wins.reduce((sum, t) => sum + t.profit, 0) / wins.length : 0,
+      avg_loss: losses.length > 0 ? losses.reduce((sum, t) => sum + t.profit, 0) / losses.length : 0,
+      largest_win: wins.length > 0 ? Math.max(...wins.map(t => t.profit)) : 0,
+      largest_loss: losses.length > 0 ? Math.min(...losses.map(t => t.profit)) : 0,
+      
+      // Risk metrics
+      profit_factor: losses.reduce((sum, t) => sum + t.profit, 0) !== 0 
+        ? Math.abs(wins.reduce((sum, t) => sum + t.profit, 0) / losses.reduce((sum, t) => sum + t.profit, 0))
+        : 0,
+      max_drawdown: maxDrawdown,
+      max_drawdown_pct: peak > 0 ? ((maxDrawdown / peak) * 100).toFixed(2) : 0,
+      sharpe_ratio: sharpeRatio.toFixed(2),
+      std_deviation: stdDev.toFixed(2),
+      
+      // Streak analysis
+      max_consecutive_wins: maxConsecWins,
+      max_consecutive_losses: maxConsecLosses,
+      
+      // Time analysis
+      avg_holding_time_minutes: avgHoldingTime.toFixed(0),
+      avg_holding_time_formatted: formatDuration(avgHoldingTime),
+      
+      // Short vs Long trades
+      short_trades: {
+        count: shortTrades.length,
+        profit: shortTrades.reduce((sum, t) => sum + t.profit, 0),
+        win_rate: shortTrades.length > 0 
+          ? ((shortTrades.filter(t => t.profit > 0).length / shortTrades.length) * 100).toFixed(2)
+          : 0
+      },
+      long_trades: {
+        count: longTrades.length,
+        profit: longTrades.reduce((sum, t) => sum + t.profit, 0),
+        win_rate: longTrades.length > 0 
+          ? ((longTrades.filter(t => t.profit > 0).length / longTrades.length) * 100).toFixed(2)
+          : 0
+      },
+      
+      // Buy vs Sell
+      buy_trades: {
+        count: buyTrades.length,
+        profit: buyTrades.reduce((sum, t) => sum + t.profit, 0),
+        win_rate: buyTrades.length > 0 
+          ? ((buyTrades.filter(t => t.profit > 0).length / buyTrades.length) * 100).toFixed(2)
+          : 0
+      },
+      sell_trades: {
+        count: sellTrades.length,
+        profit: sellTrades.reduce((sum, t) => sum + t.profit, 0),
+        win_rate: sellTrades.length > 0 
+          ? ((sellTrades.filter(t => t.profit > 0).length / sellTrades.length) * 100).toFixed(2)
+          : 0
+      },
+      
+      // Position sizing
+      avg_lot_size: avgLotSize.toFixed(2),
+      min_lot_size: Math.min(...lotSizes).toFixed(2),
+      max_lot_size: Math.max(...lotSizes).toFixed(2),
+      
+      // Hourly performance
+      hourly_performance: Object.entries(hourlyStats).map(([hour, data]) => ({
+        hour: parseInt(hour),
+        ...data,
+        win_rate: data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(2) : 0
+      })).sort((a, b) => a.hour - b.hour),
+      
+      // Daily performance
+      daily_performance: Object.entries(dailyStats).map(([day, data]) => ({
+        day,
+        ...data,
+        win_rate: data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(2) : 0
+      })),
+      
+      // Drawdown data for chart
+      drawdown_curve: drawdownData
+    };
+    
+    res.json(response);
+  } catch (error) {
+    console.error('Advanced analytics error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper function to format duration
+function formatDuration(minutes) {
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m`;
+  return `${Math.floor(minutes / 1440)}d ${Math.floor((minutes % 1440) / 60)}h`;
+}
+
+// Get monthly performance
+app.get('/api/analytics/monthly', (req, res) => {
+  try {
+    const { account_id } = req.query;
+    
+    let whereClause = 'WHERE status = ?';
+    const params = ['closed'];
+    
+    if (account_id) {
+      whereClause += ' AND account_id = ?';
+      params.push(account_id);
+    }
+    
+    const stats = dbAll(`
+      SELECT 
+        strftime('%Y-%m', close_time) as month,
+        COUNT(*) as trades,
+        SUM(profit) as profit,
+        SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN profit < 0 THEN 1 ELSE 0 END) as losses
+      FROM trades ${whereClause}
+      GROUP BY strftime('%Y-%m', close_time)
+      ORDER BY month ASC
+    `, params);
+    
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get trade analysis for a specific trade
+app.get('/api/analytics/trade/:id', (req, res) => {
+  try {
+    const trade = dbGet('SELECT * FROM trades WHERE id = ?', [req.params.id]);
+    
+    if (!trade) {
+      return res.status(404).json({ error: 'Trade not found' });
+    }
+    
+    // Get similar trades (same symbol)
+    const similarTrades = dbAll(`
+      SELECT * FROM trades 
+      WHERE symbol = ? AND status = 'closed' AND id != ?
+      ORDER BY close_time DESC
+      LIMIT 10
+    `, [trade.symbol, trade.id]);
+    
+    // Calculate stats for this symbol
+    const symbolStats = dbGet(`
+      SELECT 
+        COUNT(*) as total_trades,
+        SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(profit) as total_profit,
+        AVG(profit) as avg_profit
+      FROM trades 
+      WHERE symbol = ? AND status = 'closed'
+    `, [trade.symbol]);
+    
+    // Holding time
+    let holdingTime = null;
+    if (trade.open_time && trade.close_time) {
+      holdingTime = (new Date(trade.close_time) - new Date(trade.open_time)) / (1000 * 60);
+    }
+    
+    // Risk/Reward if SL/TP were set
+    let plannedRR = null;
+    if (trade.stop_loss && trade.take_profit && trade.open_price) {
+      const risk = Math.abs(trade.open_price - trade.stop_loss);
+      const reward = Math.abs(trade.take_profit - trade.open_price);
+      plannedRR = risk > 0 ? (reward / risk).toFixed(2) : null;
+    }
+    
+    res.json({
+      trade,
+      holding_time_minutes: holdingTime,
+      holding_time_formatted: holdingTime ? formatDuration(holdingTime) : null,
+      planned_risk_reward: plannedRR,
+      symbol_stats: symbolStats,
+      similar_trades: similarTrades
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Catch-all route for SPA in production
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (req, res) => {

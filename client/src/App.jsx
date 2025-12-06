@@ -16,7 +16,12 @@ import {
   Trash2,
   ChevronDown,
   Calendar,
-  Filter
+  Filter,
+  BarChart3,
+  Clock,
+  Zap,
+  Shield,
+  Activity
 } from 'lucide-react';
 import { 
   LineChart as RechartsLine, 
@@ -30,7 +35,15 @@ import {
   Bar,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  AreaChart,
+  Area,
+  RadarChart,
+  Radar,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  ComposedChart
 } from 'recharts';
 import { format } from 'date-fns';
 import * as api from './api';
@@ -39,6 +52,7 @@ import * as api from './api';
 function Sidebar({ activeTab, setActiveTab }) {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'trades', label: 'Trades', icon: LineChart },
     { id: 'journal', label: 'Journal', icon: BookOpen },
     { id: 'accounts', label: 'Accounts', icon: Settings },
@@ -898,6 +912,334 @@ function Accounts({ accounts, onAccountsChange }) {
   );
 }
 
+// Analytics Component - Comprehensive Trade & Portfolio Analysis
+function Analytics({ accounts }) {
+  const [analytics, setAnalytics] = useState(null);
+  const [monthlyStats, setMonthlyStats] = useState([]);
+  const [selectedAccount, setSelectedAccount] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadAnalytics();
+  }, [selectedAccount]);
+
+  const loadAnalytics = async () => {
+    try {
+      setLoading(true);
+      const params = selectedAccount ? { account_id: selectedAccount } : {};
+      const [advancedData, monthlyData] = await Promise.all([
+        api.getAdvancedAnalytics(params),
+        api.getMonthlyStats(params),
+      ]);
+      setAnalytics(advancedData);
+      setMonthlyStats(monthlyData);
+    } catch (error) {
+      console.error('Failed to load analytics:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-slate-500">Loading analytics...</div>
+      </div>
+    );
+  }
+
+  if (!analytics || analytics.total_trades === 0) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold text-slate-800">Portfolio Analytics</h2>
+        <div className="bg-white rounded-xl p-8 text-center shadow-sm border border-slate-100">
+          <BarChart3 className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+          <p className="text-slate-500">No closed trades to analyze yet.</p>
+          <p className="text-slate-400 text-sm mt-2">Analytics will appear once you have completed trades.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-slate-800">Portfolio Analytics</h2>
+        <select
+          value={selectedAccount}
+          onChange={(e) => setSelectedAccount(e.target.value)}
+          className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          <option value="">All Accounts</option>
+          {accounts.map(acc => (
+            <option key={acc.id} value={acc.id}>{acc.name || acc.account_number}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Key Performance Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-emerald-100 rounded-lg">
+              <DollarSign className="w-5 h-5 text-emerald-600" />
+            </div>
+            <span className="text-slate-500 text-sm">Net Profit</span>
+          </div>
+          <p className={`text-2xl font-bold ${analytics.total_profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+            ${analytics.total_profit?.toFixed(2)}
+          </p>
+          <p className="text-xs text-slate-400 mt-1">
+            Gross: ${analytics.gross_profit?.toFixed(2)} | Loss: ${analytics.gross_loss?.toFixed(2)}
+          </p>
+        </div>
+
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <Target className="w-5 h-5 text-blue-600" />
+            </div>
+            <span className="text-slate-500 text-sm">Win Rate</span>
+          </div>
+          <p className="text-2xl font-bold text-slate-800">{analytics.win_rate}%</p>
+          <p className="text-xs text-slate-400 mt-1">
+            {analytics.winning_trades}W / {analytics.losing_trades}L of {analytics.total_trades} trades
+          </p>
+        </div>
+
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-amber-100 rounded-lg">
+              <Award className="w-5 h-5 text-amber-600" />
+            </div>
+            <span className="text-slate-500 text-sm">Profit Factor</span>
+          </div>
+          <p className="text-2xl font-bold text-slate-800">{analytics.profit_factor?.toFixed(2)}</p>
+          <p className="text-xs text-slate-400 mt-1">
+            Avg Win: ${analytics.avg_win?.toFixed(2)} | Avg Loss: ${analytics.avg_loss?.toFixed(2)}
+          </p>
+        </div>
+
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-red-100 rounded-lg">
+              <Shield className="w-5 h-5 text-red-600" />
+            </div>
+            <span className="text-slate-500 text-sm">Max Drawdown</span>
+          </div>
+          <p className="text-2xl font-bold text-red-600">${analytics.max_drawdown?.toFixed(2)}</p>
+          <p className="text-xs text-slate-400 mt-1">
+            {analytics.max_drawdown_pct}% from peak
+          </p>
+        </div>
+      </div>
+
+      {/* Risk & Performance Metrics */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Risk Metrics */}
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Shield className="w-5 h-5 text-slate-600" />
+            Risk Metrics
+          </h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-slate-600">Sharpe Ratio</span>
+              <span className="font-semibold">{analytics.sharpe_ratio}</span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-slate-600">Std Deviation</span>
+              <span className="font-semibold">${analytics.std_deviation}</span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-slate-600">Max Consecutive Wins</span>
+              <span className="font-semibold text-emerald-600">{analytics.max_consecutive_wins}</span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-slate-600">Max Consecutive Losses</span>
+              <span className="font-semibold text-red-600">{analytics.max_consecutive_losses}</span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-slate-600">Largest Win</span>
+              <span className="font-semibold text-emerald-600">${analytics.largest_win?.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-slate-600">Largest Loss</span>
+              <span className="font-semibold text-red-600">${analytics.largest_loss?.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Trading Style Analysis */}
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Activity className="w-5 h-5 text-slate-600" />
+            Trading Style
+          </h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-slate-600">Avg Holding Time</span>
+              <span className="font-semibold">{analytics.avg_holding_time_formatted}</span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-slate-100">
+              <span className="text-slate-600">Avg Lot Size</span>
+              <span className="font-semibold">{analytics.avg_lot_size}</span>
+            </div>
+            <div className="py-2 border-b border-slate-100">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-slate-600">Buy Trades</span>
+                <span className="font-semibold">{analytics.buy_trades?.count} ({analytics.buy_trades?.win_rate}% WR)</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Sell Trades</span>
+                <span className="font-semibold">{analytics.sell_trades?.count} ({analytics.sell_trades?.win_rate}% WR)</span>
+              </div>
+            </div>
+            <div className="py-2">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-slate-600">Short Trades (&lt;1h)</span>
+                <span className={`font-semibold ${analytics.short_trades?.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  ${analytics.short_trades?.profit?.toFixed(2)} ({analytics.short_trades?.win_rate}% WR)
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Long Trades (≥1h)</span>
+                <span className={`font-semibold ${analytics.long_trades?.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  ${analytics.long_trades?.profit?.toFixed(2)} ({analytics.long_trades?.win_rate}% WR)
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Drawdown Chart */}
+      {analytics.drawdown_curve && analytics.drawdown_curve.length > 0 && (
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <h3 className="text-lg font-semibold mb-4">Equity & Drawdown</h3>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={analytics.drawdown_curve}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis 
+                  dataKey="date" 
+                  tickFormatter={(val) => val ? format(new Date(val), 'MM/dd') : ''}
+                  stroke="#94a3b8"
+                />
+                <YAxis yAxisId="left" stroke="#10b981" />
+                <YAxis yAxisId="right" orientation="right" stroke="#ef4444" />
+                <Tooltip 
+                  formatter={(value, name) => [
+                    name === 'cumulative' ? `$${value.toFixed(2)}` : `${value.toFixed(2)}%`,
+                    name === 'cumulative' ? 'Equity' : 'Drawdown'
+                  ]}
+                />
+                <Area yAxisId="left" type="monotone" dataKey="cumulative" fill="#10b98133" stroke="#10b981" />
+                <Line yAxisId="right" type="monotone" dataKey="drawdown" stroke="#ef4444" dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Performance by Time */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Hourly Performance */}
+        {analytics.hourly_performance && analytics.hourly_performance.length > 0 && (
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Clock className="w-5 h-5 text-slate-600" />
+              Performance by Hour
+            </h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={analytics.hourly_performance}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="hour" tickFormatter={(h) => `${h}:00`} stroke="#94a3b8" />
+                  <YAxis stroke="#94a3b8" />
+                  <Tooltip 
+                    formatter={(value, name) => [
+                      name === 'profit' ? `$${value.toFixed(2)}` : value,
+                      name === 'profit' ? 'Profit' : name
+                    ]}
+                    labelFormatter={(h) => `${h}:00 - ${h}:59`}
+                  />
+                  <Bar dataKey="profit" fill="#10b981" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {/* Daily Performance */}
+        {analytics.daily_performance && (
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-slate-600" />
+              Performance by Day
+            </h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={analytics.daily_performance.filter(d => d.trades > 0)}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="day" tickFormatter={(d) => d.slice(0, 3)} stroke="#94a3b8" />
+                  <YAxis stroke="#94a3b8" />
+                  <Tooltip 
+                    formatter={(value, name) => [
+                      name === 'profit' ? `$${value.toFixed(2)}` : `${value}%`,
+                      name === 'profit' ? 'Profit' : 'Win Rate'
+                    ]}
+                  />
+                  <Bar dataKey="profit" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Monthly Performance */}
+      {monthlyStats.length > 0 && (
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <h3 className="text-lg font-semibold mb-4">Monthly Performance</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="text-left px-4 py-3 text-sm font-semibold text-slate-600">Month</th>
+                  <th className="text-right px-4 py-3 text-sm font-semibold text-slate-600">Trades</th>
+                  <th className="text-right px-4 py-3 text-sm font-semibold text-slate-600">Wins</th>
+                  <th className="text-right px-4 py-3 text-sm font-semibold text-slate-600">Losses</th>
+                  <th className="text-right px-4 py-3 text-sm font-semibold text-slate-600">Win Rate</th>
+                  <th className="text-right px-4 py-3 text-sm font-semibold text-slate-600">Profit</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {monthlyStats.map(month => (
+                  <tr key={month.month} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium">{month.month}</td>
+                    <td className="px-4 py-3 text-right">{month.trades}</td>
+                    <td className="px-4 py-3 text-right text-emerald-600">{month.wins}</td>
+                    <td className="px-4 py-3 text-right text-red-600">{month.losses}</td>
+                    <td className="px-4 py-3 text-right">
+                      {month.trades > 0 ? ((month.wins / month.trades) * 100).toFixed(1) : 0}%
+                    </td>
+                    <td className={`px-4 py-3 text-right font-semibold ${month.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      ${month.profit?.toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Main App
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -920,6 +1262,8 @@ function App() {
     switch (activeTab) {
       case 'dashboard':
         return <Dashboard accounts={accounts} />;
+      case 'analytics':
+        return <Analytics accounts={accounts} />;
       case 'trades':
         return <Trades accounts={accounts} />;
       case 'journal':
@@ -934,7 +1278,7 @@ function App() {
   return (
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-      <main className="flex-1 p-8">
+      <main className="flex-1 p-8 overflow-auto">
         {renderContent()}
       </main>
     </div>
