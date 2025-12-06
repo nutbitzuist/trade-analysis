@@ -11,7 +11,7 @@
 //--- Input parameters
 input string   ServerURL = "https://tradeanalysis.up.railway.app/api/sync";  // Server URL
 input string   ApiKey = "";                                    // API Key from Web App
-input int      SyncIntervalSeconds = 30;                       // Sync interval in seconds
+input int      SyncIntervalSeconds = 1800;                     // Sync interval in seconds (1800 = 30 minutes)
 input bool     SyncOpenTrades = true;                          // Sync open trades
 input bool     SyncClosedTrades = true;                        // Sync closed (history) trades
 input int      HistoryDays = 30;                               // Days of history to sync
