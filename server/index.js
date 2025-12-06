@@ -1,7 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
-import Database from 'better-sqlite3';
+import initSqlJs from 'sql.js';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -11,75 +12,131 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Initialize SQLite database
+// Database setup
 const dbPath = process.env.DATABASE_PATH || path.join(__dirname, '../data/trades.db');
-const db = new Database(dbPath);
+const dbDir = path.dirname(dbPath);
 
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS accounts (
-    id TEXT PRIMARY KEY,
-    account_number TEXT UNIQUE NOT NULL,
-    broker TEXT,
-    name TEXT,
-    balance REAL DEFAULT 0,
-    equity REAL DEFAULT 0,
-    currency TEXT DEFAULT 'USD',
-    leverage TEXT,
-    server TEXT,
-    platform TEXT DEFAULT 'MT4',
-    api_key TEXT UNIQUE NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+// Ensure data directory exists
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
 
-  CREATE TABLE IF NOT EXISTS trades (
-    id TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL,
-    ticket INTEGER NOT NULL,
-    symbol TEXT NOT NULL,
-    type TEXT NOT NULL,
-    lots REAL NOT NULL,
-    open_price REAL NOT NULL,
-    close_price REAL,
-    stop_loss REAL,
-    take_profit REAL,
-    open_time DATETIME NOT NULL,
-    close_time DATETIME,
-    commission REAL DEFAULT 0,
-    swap REAL DEFAULT 0,
-    profit REAL DEFAULT 0,
-    magic_number INTEGER DEFAULT 0,
-    comment TEXT,
-    status TEXT DEFAULT 'open',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (account_id) REFERENCES accounts(id),
-    UNIQUE(account_id, ticket)
-  );
+// Initialize SQL.js
+let db;
 
-  CREATE TABLE IF NOT EXISTS journal_entries (
-    id TEXT PRIMARY KEY,
-    trade_id TEXT,
-    account_id TEXT,
-    title TEXT,
-    content TEXT,
-    tags TEXT,
-    emotion TEXT,
-    rating INTEGER,
-    lessons_learned TEXT,
-    mistakes TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (trade_id) REFERENCES trades(id),
-    FOREIGN KEY (account_id) REFERENCES accounts(id)
-  );
+async function initDatabase() {
+  const SQL = await initSqlJs();
+  
+  // Load existing database or create new one
+  if (fs.existsSync(dbPath)) {
+    const fileBuffer = fs.readFileSync(dbPath);
+    db = new SQL.Database(fileBuffer);
+  } else {
+    db = new SQL.Database();
+  }
+  
+  // Create tables
+  db.run(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      account_number TEXT UNIQUE NOT NULL,
+      broker TEXT,
+      name TEXT,
+      balance REAL DEFAULT 0,
+      equity REAL DEFAULT 0,
+      currency TEXT DEFAULT 'USD',
+      leverage TEXT,
+      server TEXT,
+      platform TEXT DEFAULT 'MT4',
+      api_key TEXT UNIQUE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-  CREATE INDEX IF NOT EXISTS idx_trades_account ON trades(account_id);
-  CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
-  CREATE INDEX IF NOT EXISTS idx_trades_open_time ON trades(open_time);
-  CREATE INDEX IF NOT EXISTS idx_journal_trade ON journal_entries(trade_id);
-`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS trades (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      ticket INTEGER NOT NULL,
+      symbol TEXT NOT NULL,
+      type TEXT NOT NULL,
+      lots REAL NOT NULL,
+      open_price REAL NOT NULL,
+      close_price REAL,
+      stop_loss REAL,
+      take_profit REAL,
+      open_time DATETIME NOT NULL,
+      close_time DATETIME,
+      commission REAL DEFAULT 0,
+      swap REAL DEFAULT 0,
+      profit REAL DEFAULT 0,
+      magic_number INTEGER DEFAULT 0,
+      comment TEXT,
+      status TEXT DEFAULT 'open',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (account_id) REFERENCES accounts(id),
+      UNIQUE(account_id, ticket)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS journal_entries (
+      id TEXT PRIMARY KEY,
+      trade_id TEXT,
+      account_id TEXT,
+      title TEXT,
+      content TEXT,
+      tags TEXT,
+      emotion TEXT,
+      rating INTEGER,
+      lessons_learned TEXT,
+      mistakes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (trade_id) REFERENCES trades(id),
+      FOREIGN KEY (account_id) REFERENCES accounts(id)
+    )
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trades_account ON trades(account_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_trades_open_time ON trades(open_time)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_journal_trade ON journal_entries(trade_id)`);
+  
+  saveDatabase();
+  console.log('Database initialized');
+}
+
+// Save database to file
+function saveDatabase() {
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  fs.writeFileSync(dbPath, buffer);
+}
+
+// Helper functions to match better-sqlite3 API
+function dbAll(sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  const results = [];
+  while (stmt.step()) {
+    results.push(stmt.getAsObject());
+  }
+  stmt.free();
+  return results;
+}
+
+function dbGet(sql, params = []) {
+  const results = dbAll(sql, params);
+  return results[0] || null;
+}
+
+function dbRun(sql, params = []) {
+  db.run(sql, params);
+  saveDatabase();
+}
 
 // CORS configuration for production
 const corsOptions = {
@@ -101,7 +158,7 @@ if (process.env.NODE_ENV === 'production') {
 // Get all accounts
 app.get('/api/accounts', (req, res) => {
   try {
-    const accounts = db.prepare('SELECT * FROM accounts ORDER BY created_at DESC').all();
+    const accounts = dbAll('SELECT * FROM accounts ORDER BY created_at DESC');
     res.json(accounts);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -115,14 +172,13 @@ app.post('/api/accounts', (req, res) => {
     const id = uuidv4();
     const api_key = uuidv4().replace(/-/g, '');
     
-    const stmt = db.prepare(`
-      INSERT INTO accounts (id, account_number, broker, name, currency, leverage, server, platform, api_key)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    dbRun(
+      `INSERT INTO accounts (id, account_number, broker, name, currency, leverage, server, platform, api_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, account_number, broker, name, currency || 'USD', leverage, server, platform || 'MT4', api_key]
+    );
     
-    stmt.run(id, account_number, broker, name, currency || 'USD', leverage, server, platform || 'MT4', api_key);
-    
-    const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id);
+    const account = dbGet('SELECT * FROM accounts WHERE id = ?', [id]);
     res.status(201).json(account);
   } catch (error) {
     if (error.message.includes('UNIQUE constraint failed')) {
@@ -137,9 +193,9 @@ app.post('/api/accounts', (req, res) => {
 app.delete('/api/accounts/:id', (req, res) => {
   try {
     const { id } = req.params;
-    db.prepare('DELETE FROM journal_entries WHERE account_id = ?').run(id);
-    db.prepare('DELETE FROM trades WHERE account_id = ?').run(id);
-    db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+    dbRun('DELETE FROM journal_entries WHERE account_id = ?', [id]);
+    dbRun('DELETE FROM trades WHERE account_id = ?', [id]);
+    dbRun('DELETE FROM accounts WHERE id = ?', [id]);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -158,60 +214,77 @@ app.post('/api/sync', (req, res) => {
     }
     
     // Find account by API key
-    const account = db.prepare('SELECT * FROM accounts WHERE api_key = ?').get(api_key);
+    const account = dbGet('SELECT * FROM accounts WHERE api_key = ?', [api_key]);
     if (!account) {
       return res.status(401).json({ error: 'Invalid API key' });
     }
     
     // Update account info
     if (account_info) {
-      db.prepare(`
-        UPDATE accounts SET balance = ?, equity = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(account_info.balance || 0, account_info.equity || 0, account.id);
+      dbRun(
+        `UPDATE accounts SET balance = ?, equity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [account_info.balance || 0, account_info.equity || 0, account.id]
+      );
     }
     
     // Upsert trades
-    const upsertTrade = db.prepare(`
-      INSERT INTO trades (id, account_id, ticket, symbol, type, lots, open_price, close_price, 
-        stop_loss, take_profit, open_time, close_time, commission, swap, profit, magic_number, comment, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(account_id, ticket) DO UPDATE SET
-        close_price = excluded.close_price,
-        stop_loss = excluded.stop_loss,
-        take_profit = excluded.take_profit,
-        close_time = excluded.close_time,
-        commission = excluded.commission,
-        swap = excluded.swap,
-        profit = excluded.profit,
-        status = excluded.status,
-        updated_at = CURRENT_TIMESTAMP
-    `);
-    
     let synced = 0;
     if (trades && Array.isArray(trades)) {
       for (const trade of trades) {
-        const id = uuidv4();
-        upsertTrade.run(
-          id,
-          account.id,
-          trade.ticket,
-          trade.symbol,
-          trade.type,
-          trade.lots,
-          trade.open_price,
-          trade.close_price || null,
-          trade.stop_loss || null,
-          trade.take_profit || null,
-          trade.open_time,
-          trade.close_time || null,
-          trade.commission || 0,
-          trade.swap || 0,
-          trade.profit || 0,
-          trade.magic_number || 0,
-          trade.comment || '',
-          trade.close_time ? 'closed' : 'open'
+        // Check if trade exists
+        const existing = dbGet(
+          'SELECT id FROM trades WHERE account_id = ? AND ticket = ?',
+          [account.id, trade.ticket]
         );
+        
+        if (existing) {
+          // Update existing trade
+          dbRun(
+            `UPDATE trades SET 
+              close_price = ?, stop_loss = ?, take_profit = ?, close_time = ?,
+              commission = ?, swap = ?, profit = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [
+              trade.close_price || null,
+              trade.stop_loss || null,
+              trade.take_profit || null,
+              trade.close_time || null,
+              trade.commission || 0,
+              trade.swap || 0,
+              trade.profit || 0,
+              trade.close_time ? 'closed' : 'open',
+              existing.id
+            ]
+          );
+        } else {
+          // Insert new trade
+          const id = uuidv4();
+          dbRun(
+            `INSERT INTO trades (id, account_id, ticket, symbol, type, lots, open_price, close_price,
+              stop_loss, take_profit, open_time, close_time, commission, swap, profit, magic_number, comment, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              id,
+              account.id,
+              trade.ticket,
+              trade.symbol,
+              trade.type,
+              trade.lots,
+              trade.open_price,
+              trade.close_price || null,
+              trade.stop_loss || null,
+              trade.take_profit || null,
+              trade.open_time,
+              trade.close_time || null,
+              trade.commission || 0,
+              trade.swap || 0,
+              trade.profit || 0,
+              trade.magic_number || 0,
+              trade.comment || '',
+              trade.close_time ? 'closed' : 'open'
+            ]
+          );
+        }
         synced++;
       }
     }
@@ -257,7 +330,7 @@ app.get('/api/trades', (req, res) => {
     query += ' ORDER BY t.open_time DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
     
-    const trades = db.prepare(query).all(...params);
+    const trades = dbAll(query, params);
     res.json(trades);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -267,12 +340,13 @@ app.get('/api/trades', (req, res) => {
 // Get trade by ID
 app.get('/api/trades/:id', (req, res) => {
   try {
-    const trade = db.prepare(`
-      SELECT t.*, a.account_number, a.broker 
-      FROM trades t 
-      JOIN accounts a ON t.account_id = a.id 
-      WHERE t.id = ?
-    `).get(req.params.id);
+    const trade = dbGet(
+      `SELECT t.*, a.account_number, a.broker 
+       FROM trades t 
+       JOIN accounts a ON t.account_id = a.id 
+       WHERE t.id = ?`,
+      [req.params.id]
+    );
     
     if (!trade) {
       return res.status(404).json({ error: 'Trade not found' });
@@ -305,7 +379,7 @@ app.get('/api/journal', (req, res) => {
     query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
     
-    const entries = db.prepare(query).all(...params);
+    const entries = dbAll(query, params);
     res.json(entries);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -318,15 +392,14 @@ app.post('/api/journal', (req, res) => {
     const { trade_id, account_id, title, content, tags, emotion, rating, lessons_learned, mistakes } = req.body;
     const id = uuidv4();
     
-    const stmt = db.prepare(`
-      INSERT INTO journal_entries (id, trade_id, account_id, title, content, tags, emotion, rating, lessons_learned, mistakes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    dbRun(
+      `INSERT INTO journal_entries (id, trade_id, account_id, title, content, tags, emotion, rating, lessons_learned, mistakes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, trade_id || null, account_id || null, title, content, 
+       tags ? JSON.stringify(tags) : null, emotion, rating, lessons_learned, mistakes]
+    );
     
-    stmt.run(id, trade_id || null, account_id || null, title, content, 
-      tags ? JSON.stringify(tags) : null, emotion, rating, lessons_learned, mistakes);
-    
-    const entry = db.prepare('SELECT * FROM journal_entries WHERE id = ?').get(id);
+    const entry = dbGet('SELECT * FROM journal_entries WHERE id = ?', [id]);
     res.status(201).json(entry);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -338,13 +411,14 @@ app.put('/api/journal/:id', (req, res) => {
   try {
     const { title, content, tags, emotion, rating, lessons_learned, mistakes } = req.body;
     
-    db.prepare(`
-      UPDATE journal_entries 
-      SET title = ?, content = ?, tags = ?, emotion = ?, rating = ?, lessons_learned = ?, mistakes = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(title, content, tags ? JSON.stringify(tags) : null, emotion, rating, lessons_learned, mistakes, req.params.id);
+    dbRun(
+      `UPDATE journal_entries 
+       SET title = ?, content = ?, tags = ?, emotion = ?, rating = ?, lessons_learned = ?, mistakes = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [title, content, tags ? JSON.stringify(tags) : null, emotion, rating, lessons_learned, mistakes, req.params.id]
+    );
     
-    const entry = db.prepare('SELECT * FROM journal_entries WHERE id = ?').get(req.params.id);
+    const entry = dbGet('SELECT * FROM journal_entries WHERE id = ?', [req.params.id]);
     res.json(entry);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -354,7 +428,7 @@ app.put('/api/journal/:id', (req, res) => {
 // Delete journal entry
 app.delete('/api/journal/:id', (req, res) => {
   try {
-    db.prepare('DELETE FROM journal_entries WHERE id = ?').run(req.params.id);
+    dbRun('DELETE FROM journal_entries WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -384,7 +458,7 @@ app.get('/api/analytics/portfolio', (req, res) => {
       params.push(to);
     }
     
-    const stats = db.prepare(`
+    const stats = dbGet(`
       SELECT 
         COUNT(*) as total_trades,
         SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as winning_trades,
@@ -401,12 +475,12 @@ app.get('/api/analytics/portfolio', (req, res) => {
         AVG(CASE WHEN profit > 0 THEN profit ELSE NULL END) as avg_win,
         AVG(CASE WHEN profit < 0 THEN profit ELSE NULL END) as avg_loss
       FROM trades ${whereClause}
-    `).get(...params);
+    `, params) || {};
     
     // Calculate win rate and profit factor
     stats.win_rate = stats.total_trades > 0 ? (stats.winning_trades / stats.total_trades * 100).toFixed(2) : 0;
-    stats.profit_factor = stats.gross_loss !== 0 ? Math.abs(stats.gross_profit / stats.gross_loss).toFixed(2) : 0;
-    stats.risk_reward = stats.avg_loss !== 0 ? Math.abs(stats.avg_win / stats.avg_loss).toFixed(2) : 0;
+    stats.profit_factor = stats.gross_loss !== 0 && stats.gross_loss !== null ? Math.abs(stats.gross_profit / stats.gross_loss).toFixed(2) : 0;
+    stats.risk_reward = stats.avg_loss !== 0 && stats.avg_loss !== null ? Math.abs(stats.avg_win / stats.avg_loss).toFixed(2) : 0;
     
     res.json(stats);
   } catch (error) {
@@ -427,7 +501,7 @@ app.get('/api/analytics/by-symbol', (req, res) => {
       params.push(account_id);
     }
     
-    const stats = db.prepare(`
+    const stats = dbAll(`
       SELECT 
         symbol,
         COUNT(*) as total_trades,
@@ -438,7 +512,7 @@ app.get('/api/analytics/by-symbol', (req, res) => {
       FROM trades ${whereClause}
       GROUP BY symbol
       ORDER BY total_profit DESC
-    `).all(...params);
+    `, params);
     
     res.json(stats);
   } catch (error) {
@@ -459,11 +533,11 @@ app.get('/api/analytics/equity-curve', (req, res) => {
       params.push(account_id);
     }
     
-    const trades = db.prepare(`
+    const trades = dbAll(`
       SELECT close_time, profit
       FROM trades ${whereClause}
       ORDER BY close_time ASC
-    `).all(...params);
+    `, params);
     
     let cumulative = 0;
     const curve = trades.map(t => {
@@ -494,7 +568,7 @@ app.get('/api/analytics/daily', (req, res) => {
       params.push(account_id);
     }
     
-    const stats = db.prepare(`
+    const stats = dbAll(`
       SELECT 
         DATE(close_time) as date,
         COUNT(*) as trades,
@@ -505,7 +579,7 @@ app.get('/api/analytics/daily', (req, res) => {
       GROUP BY DATE(close_time)
       ORDER BY date DESC
       LIMIT ?
-    `).all(...params, parseInt(days));
+    `, [...params, parseInt(days)]);
     
     res.json(stats.reverse());
   } catch (error) {
@@ -516,7 +590,7 @@ app.get('/api/analytics/daily', (req, res) => {
 // Get unique symbols
 app.get('/api/symbols', (req, res) => {
   try {
-    const symbols = db.prepare('SELECT DISTINCT symbol FROM trades ORDER BY symbol').all();
+    const symbols = dbAll('SELECT DISTINCT symbol FROM trades ORDER BY symbol');
     res.json(symbols.map(s => s.symbol));
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -530,6 +604,12 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Trade Analysis API running on port ${PORT}`);
+// Start server after database is initialized
+initDatabase().then(() => {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Trade Analysis API running on port ${PORT}`);
+  });
+}).catch(err => {
+  console.error('Failed to initialize database:', err);
+  process.exit(1);
 });
