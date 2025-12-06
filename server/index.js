@@ -740,6 +740,238 @@ app.get('/api/analytics/monthly', async (req, res) => {
   }
 });
 
+// Session Analysis (Asian, London, New York)
+app.get('/api/analytics/sessions', async (req, res) => {
+  try {
+    const { account_id } = req.query;
+    
+    let query = 'SELECT * FROM trades WHERE status = $1';
+    const params = ['closed'];
+    
+    if (account_id) {
+      query += ' AND account_id = $2';
+      params.push(account_id);
+    }
+    
+    const result = await pool.query(query, params);
+    const trades = result.rows;
+    
+    // Define sessions (UTC times)
+    // Asian: 00:00 - 08:00 UTC
+    // London: 08:00 - 16:00 UTC
+    // New York: 13:00 - 21:00 UTC
+    // Overlap London/NY: 13:00 - 16:00 UTC
+    
+    const sessions = {
+      asian: { trades: 0, profit: 0, wins: 0, losses: 0 },
+      london: { trades: 0, profit: 0, wins: 0, losses: 0 },
+      new_york: { trades: 0, profit: 0, wins: 0, losses: 0 },
+      off_hours: { trades: 0, profit: 0, wins: 0, losses: 0 }
+    };
+    
+    trades.forEach(t => {
+      if (!t.open_time) return;
+      const hour = new Date(t.open_time).getUTCHours();
+      const profit = parseFloat(t.profit);
+      
+      let session = 'off_hours';
+      if (hour >= 0 && hour < 8) session = 'asian';
+      else if (hour >= 8 && hour < 13) session = 'london';
+      else if (hour >= 13 && hour < 21) session = 'new_york';
+      
+      sessions[session].trades++;
+      sessions[session].profit += profit;
+      if (profit > 0) sessions[session].wins++;
+      else if (profit < 0) sessions[session].losses++;
+    });
+    
+    // Calculate win rates
+    Object.keys(sessions).forEach(key => {
+      const s = sessions[key];
+      s.win_rate = s.trades > 0 ? ((s.wins / s.trades) * 100).toFixed(2) : 0;
+      s.avg_profit = s.trades > 0 ? (s.profit / s.trades).toFixed(2) : 0;
+    });
+    
+    res.json(sessions);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Calendar heatmap data
+app.get('/api/analytics/calendar', async (req, res) => {
+  try {
+    const { account_id, year } = req.query;
+    const targetYear = year || new Date().getFullYear();
+    
+    let query = `
+      SELECT 
+        TO_CHAR(close_time, 'YYYY-MM-DD') as date,
+        COUNT(*) as trades,
+        SUM(profit) as profit,
+        SUM(CASE WHEN profit > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN profit < 0 THEN 1 ELSE 0 END) as losses
+      FROM trades 
+      WHERE status = 'closed' 
+        AND EXTRACT(YEAR FROM close_time) = $1
+    `;
+    const params = [targetYear];
+    
+    if (account_id) {
+      query += ' AND account_id = $2';
+      params.push(account_id);
+    }
+    
+    query += " GROUP BY TO_CHAR(close_time, 'YYYY-MM-DD') ORDER BY date ASC";
+    
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Performance after wins vs losses (revenge trading detection)
+app.get('/api/analytics/psychology', async (req, res) => {
+  try {
+    const { account_id } = req.query;
+    
+    let query = 'SELECT * FROM trades WHERE status = $1';
+    const params = ['closed'];
+    
+    if (account_id) {
+      query += ' AND account_id = $2';
+      params.push(account_id);
+    }
+    
+    query += ' ORDER BY close_time ASC';
+    
+    const result = await pool.query(query, params);
+    const trades = result.rows;
+    
+    if (trades.length < 2) {
+      return res.json({ message: 'Not enough trades for psychology analysis' });
+    }
+    
+    // Analyze performance after wins vs after losses
+    const afterWin = { trades: 0, profit: 0, wins: 0 };
+    const afterLoss = { trades: 0, profit: 0, wins: 0 };
+    
+    for (let i = 1; i < trades.length; i++) {
+      const prevProfit = parseFloat(trades[i - 1].profit);
+      const currentProfit = parseFloat(trades[i].profit);
+      
+      if (prevProfit > 0) {
+        afterWin.trades++;
+        afterWin.profit += currentProfit;
+        if (currentProfit > 0) afterWin.wins++;
+      } else if (prevProfit < 0) {
+        afterLoss.trades++;
+        afterLoss.profit += currentProfit;
+        if (currentProfit > 0) afterLoss.wins++;
+      }
+    }
+    
+    // Calculate metrics
+    afterWin.win_rate = afterWin.trades > 0 ? ((afterWin.wins / afterWin.trades) * 100).toFixed(2) : 0;
+    afterWin.avg_profit = afterWin.trades > 0 ? (afterWin.profit / afterWin.trades).toFixed(2) : 0;
+    afterLoss.win_rate = afterLoss.trades > 0 ? ((afterLoss.wins / afterLoss.trades) * 100).toFixed(2) : 0;
+    afterLoss.avg_profit = afterLoss.trades > 0 ? (afterLoss.profit / afterLoss.trades).toFixed(2) : 0;
+    
+    // Detect potential revenge trading
+    const revengeTradingRisk = parseFloat(afterLoss.avg_profit) < parseFloat(afterWin.avg_profit) * 0.5 
+      ? 'High' 
+      : parseFloat(afterLoss.avg_profit) < parseFloat(afterWin.avg_profit) 
+        ? 'Medium' 
+        : 'Low';
+    
+    res.json({
+      after_win: afterWin,
+      after_loss: afterLoss,
+      revenge_trading_risk: revengeTradingRisk,
+      insight: parseFloat(afterLoss.avg_profit) < 0 
+        ? 'You tend to lose money on trades taken after a loss. Consider taking a break after losing trades.'
+        : 'Your performance after losses is healthy.'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Risk analysis per trade
+app.get('/api/analytics/risk', async (req, res) => {
+  try {
+    const { account_id } = req.query;
+    
+    // Get account balance
+    let accountBalance = 10000; // Default
+    if (account_id) {
+      const accResult = await pool.query('SELECT balance FROM accounts WHERE id = $1', [account_id]);
+      if (accResult.rows.length > 0 && accResult.rows[0].balance > 0) {
+        accountBalance = parseFloat(accResult.rows[0].balance);
+      }
+    }
+    
+    let query = 'SELECT * FROM trades WHERE status = $1';
+    const params = ['closed'];
+    
+    if (account_id) {
+      query += ' AND account_id = $2';
+      params.push(account_id);
+    }
+    
+    const result = await pool.query(query, params);
+    const trades = result.rows;
+    
+    if (trades.length === 0) {
+      return res.json({ message: 'No trades for risk analysis' });
+    }
+    
+    // Calculate risk metrics
+    const losses = trades.filter(t => parseFloat(t.profit) < 0);
+    const avgLoss = losses.length > 0 
+      ? Math.abs(losses.reduce((sum, t) => sum + parseFloat(t.profit), 0) / losses.length)
+      : 0;
+    
+    const maxLoss = losses.length > 0 
+      ? Math.abs(Math.min(...losses.map(t => parseFloat(t.profit))))
+      : 0;
+    
+    const avgRiskPercent = accountBalance > 0 ? ((avgLoss / accountBalance) * 100).toFixed(2) : 0;
+    const maxRiskPercent = accountBalance > 0 ? ((maxLoss / accountBalance) * 100).toFixed(2) : 0;
+    
+    // Risk of ruin calculation (simplified)
+    const winRate = trades.filter(t => parseFloat(t.profit) > 0).length / trades.length;
+    const avgWin = trades.filter(t => parseFloat(t.profit) > 0)
+      .reduce((sum, t) => sum + parseFloat(t.profit), 0) / trades.filter(t => parseFloat(t.profit) > 0).length || 0;
+    
+    const riskRewardRatio = avgLoss > 0 ? (avgWin / avgLoss).toFixed(2) : 0;
+    
+    // Kelly Criterion
+    const kellyPercent = winRate > 0 && avgLoss > 0
+      ? ((winRate - ((1 - winRate) / (avgWin / avgLoss))) * 100).toFixed(2)
+      : 0;
+    
+    res.json({
+      account_balance: accountBalance,
+      avg_loss: avgLoss.toFixed(2),
+      max_loss: maxLoss.toFixed(2),
+      avg_risk_percent: avgRiskPercent,
+      max_risk_percent: maxRiskPercent,
+      risk_reward_ratio: riskRewardRatio,
+      kelly_criterion: Math.max(0, kellyPercent),
+      recommended_risk: Math.min(2, Math.max(0.5, kellyPercent / 2)).toFixed(2),
+      risk_assessment: parseFloat(maxRiskPercent) > 5 
+        ? 'High Risk - Consider reducing position sizes'
+        : parseFloat(maxRiskPercent) > 2 
+          ? 'Moderate Risk - Within acceptable range'
+          : 'Conservative - Good risk management'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Catch-all for SPA
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (req, res) => {

@@ -916,6 +916,9 @@ function Accounts({ accounts, onAccountsChange }) {
 function Analytics({ accounts }) {
   const [analytics, setAnalytics] = useState(null);
   const [monthlyStats, setMonthlyStats] = useState([]);
+  const [sessionStats, setSessionStats] = useState(null);
+  const [psychologyData, setPsychologyData] = useState(null);
+  const [riskData, setRiskData] = useState(null);
   const [selectedAccount, setSelectedAccount] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -927,12 +930,18 @@ function Analytics({ accounts }) {
     try {
       setLoading(true);
       const params = selectedAccount ? { account_id: selectedAccount } : {};
-      const [advancedData, monthlyData] = await Promise.all([
+      const [advancedData, monthlyData, sessionData, psychData, riskAnalysis] = await Promise.all([
         api.getAdvancedAnalytics(params),
         api.getMonthlyStats(params),
+        api.getSessionStats(params),
+        api.getPsychologyAnalysis(params),
+        api.getRiskAnalysis(params),
       ]);
       setAnalytics(advancedData);
       setMonthlyStats(monthlyData);
+      setSessionStats(sessionData);
+      setPsychologyData(psychData);
+      setRiskData(riskAnalysis);
     } catch (error) {
       console.error('Failed to load analytics:', error);
     } finally {
@@ -1236,6 +1245,133 @@ function Analytics({ accounts }) {
           </div>
         </div>
       )}
+
+      {/* Session Analysis */}
+      {sessionStats && !sessionStats.message && (
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Clock className="w-5 h-5 text-slate-600" />
+            Trading Session Performance
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {[
+              { key: 'asian', name: 'Asian', time: '00:00-08:00 UTC', color: 'bg-purple-100 text-purple-700' },
+              { key: 'london', name: 'London', time: '08:00-13:00 UTC', color: 'bg-blue-100 text-blue-700' },
+              { key: 'new_york', name: 'New York', time: '13:00-21:00 UTC', color: 'bg-amber-100 text-amber-700' },
+              { key: 'off_hours', name: 'Off Hours', time: '21:00-00:00 UTC', color: 'bg-slate-100 text-slate-700' },
+            ].map(session => (
+              <div key={session.key} className="p-4 rounded-lg border border-slate-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${session.color}`}>
+                    {session.name}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mb-3">{session.time}</p>
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-slate-600">Trades</span>
+                    <span className="font-semibold">{sessionStats[session.key]?.trades || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-slate-600">Win Rate</span>
+                    <span className="font-semibold">{sessionStats[session.key]?.win_rate || 0}%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-slate-600">Profit</span>
+                    <span className={`font-semibold ${parseFloat(sessionStats[session.key]?.profit || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      ${parseFloat(sessionStats[session.key]?.profit || 0).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Psychology & Risk Analysis */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Psychology Analysis */}
+        {psychologyData && !psychologyData.message && (
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Zap className="w-5 h-5 text-slate-600" />
+              Trading Psychology
+            </h3>
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg bg-slate-50">
+                <p className="text-sm font-medium text-slate-700 mb-2">Performance After Winning Trade</p>
+                <div className="flex justify-between text-sm">
+                  <span>Win Rate: <strong>{psychologyData.after_win?.win_rate}%</strong></span>
+                  <span>Avg Profit: <strong className={parseFloat(psychologyData.after_win?.avg_profit) >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                    ${psychologyData.after_win?.avg_profit}
+                  </strong></span>
+                </div>
+              </div>
+              <div className="p-4 rounded-lg bg-slate-50">
+                <p className="text-sm font-medium text-slate-700 mb-2">Performance After Losing Trade</p>
+                <div className="flex justify-between text-sm">
+                  <span>Win Rate: <strong>{psychologyData.after_loss?.win_rate}%</strong></span>
+                  <span>Avg Profit: <strong className={parseFloat(psychologyData.after_loss?.avg_profit) >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                    ${psychologyData.after_loss?.avg_profit}
+                  </strong></span>
+                </div>
+              </div>
+              <div className={`p-4 rounded-lg ${
+                psychologyData.revenge_trading_risk === 'High' ? 'bg-red-50 border border-red-200' :
+                psychologyData.revenge_trading_risk === 'Medium' ? 'bg-amber-50 border border-amber-200' :
+                'bg-emerald-50 border border-emerald-200'
+              }`}>
+                <p className="text-sm font-medium mb-1">Revenge Trading Risk: <strong>{psychologyData.revenge_trading_risk}</strong></p>
+                <p className="text-xs text-slate-600">{psychologyData.insight}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Risk Analysis */}
+        {riskData && !riskData.message && (
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Shield className="w-5 h-5 text-slate-600" />
+              Risk Analysis
+            </h3>
+            <div className="space-y-3">
+              <div className="flex justify-between py-2 border-b border-slate-100">
+                <span className="text-slate-600">Average Loss</span>
+                <span className="font-semibold text-red-600">${riskData.avg_loss}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-slate-100">
+                <span className="text-slate-600">Max Loss</span>
+                <span className="font-semibold text-red-600">${riskData.max_loss}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-slate-100">
+                <span className="text-slate-600">Avg Risk %</span>
+                <span className="font-semibold">{riskData.avg_risk_percent}%</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-slate-100">
+                <span className="text-slate-600">Risk/Reward Ratio</span>
+                <span className="font-semibold">{riskData.risk_reward_ratio}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-slate-100">
+                <span className="text-slate-600">Kelly Criterion</span>
+                <span className="font-semibold">{riskData.kelly_criterion}%</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-slate-100">
+                <span className="text-slate-600">Recommended Risk</span>
+                <span className="font-semibold text-blue-600">{riskData.recommended_risk}%</span>
+              </div>
+              <div className={`p-3 rounded-lg mt-2 ${
+                riskData.risk_assessment?.includes('High') ? 'bg-red-50 text-red-700' :
+                riskData.risk_assessment?.includes('Moderate') ? 'bg-amber-50 text-amber-700' :
+                'bg-emerald-50 text-emerald-700'
+              }`}>
+                <p className="text-sm font-medium">{riskData.risk_assessment}</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

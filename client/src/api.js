@@ -67,3 +67,21 @@ export const getMonthlyStats = (params = {}) => {
   return request(`/analytics/monthly${query ? `?${query}` : ''}`);
 };
 export const getTradeAnalysis = (id) => request(`/analytics/trade/${id}`);
+
+// New Analytics
+export const getSessionStats = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return request(`/analytics/sessions${query ? `?${query}` : ''}`);
+};
+export const getCalendarData = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return request(`/analytics/calendar${query ? `?${query}` : ''}`);
+};
+export const getPsychologyAnalysis = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return request(`/analytics/psychology${query ? `?${query}` : ''}`);
+};
+export const getRiskAnalysis = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return request(`/analytics/risk${query ? `?${query}` : ''}`);
+};
